@@ -33,13 +33,13 @@ def send_cce_to_vanguard(cce_payload):
     }
 
     try:
-        response = requests.post(api_url, headers=headers, data=json.dumps(cce_payload), timeout=10)
+        response = requests.post(api_url, headers=headers, json=cce_payload, timeout=10)
         response.raise_for_status()
         print(f"Successfully sent CCE to Vanguard. Status: {response.status_code}, Response: {response.text}")
     except requests.exceptions.RequestException as e:
         print(f"ERROR: Failed to send CCE to Vanguard: {e}")
 
-def trigger_remediation(bucket_arn):
+def trigger_remediation(bucket_arn, failed_checks):
     """
     Sends a message to an SQS queue to trigger a downstream remediation playbook.
     """
@@ -50,8 +50,9 @@ def trigger_remediation(bucket_arn):
 
     sqs = boto3.client('sqs')
     message_body = {
-        'action': 'remediate_s3_public_access',
+        'action': 'remediate_s3_bucket',
         'resource_id': bucket_arn,
+        'failed_checks': failed_checks,
         'timestamp': datetime.datetime.utcnow().isoformat()
     }
 
@@ -96,8 +97,8 @@ def lambda_handler(event, context):
             bucket_name = bucket['Name']
             bucket_arn = f"arn:aws:s3:::{bucket_name}"
 
-            # Perform checks and create CCE payloads
             cce_payloads = []
+            failed_checks = []
 
             # 1. Public Access Block Check
             is_public_access_compliant = False
@@ -118,6 +119,7 @@ def lambda_handler(event, context):
                 cce_payloads.append(create_cce_payload(bucket_arn, timestamp, 'PASS', finding_public_access, pass_fail_criteria_public))
             else:
                 cce_payloads.append(create_cce_payload(bucket_arn, timestamp, 'FAIL', finding_public_access, pass_fail_criteria_public, 'High', 'remediation_playbooks/s3_public_access_fix.tf'))
+                failed_checks.append('public_access_block')
 
             # 2. Default Encryption Check
             is_encryption_compliant = False
@@ -135,14 +137,16 @@ def lambda_handler(event, context):
             if is_encryption_compliant:
                 cce_payloads.append(create_cce_payload(bucket_arn, timestamp, 'PASS', finding_encryption, pass_fail_criteria_encryption))
             else:
-                cce_payloads.append(create_cce_payload(bucket_arn, timestamp, 'FAIL', finding_encryption, pass_fail_criteria_encryption, 'High', 'remediation_playbooks/s3_public_access_fix.tf'))
+                cce_payloads.append(create_cce_payload(bucket_arn, timestamp, 'FAIL', finding_encryption, pass_fail_criteria_encryption, 'High', 'remediation_playbooks/s3_encryption_fix.tf'))
+                failed_checks.append('default_encryption')
 
             # Process each CCE payload
             for payload in cce_payloads:
                 send_cce_to_vanguard(payload)
-                # If a failure is detected, trigger remediation
-                if payload['Status'] == 'FAIL':
-                    trigger_remediation(bucket_arn)
+
+            # If any failures were detected for the bucket, trigger a single remediation action
+            if failed_checks:
+                trigger_remediation(bucket_arn, failed_checks)
 
             processed_buckets += 1
 
