@@ -1,0 +1,2 @@
+vanguard_agent_api_url = "https://your-vanguard-agent-api.example.com/cce"
+vanguard_api_key       = "YOUR_API_KEY_HERE"
