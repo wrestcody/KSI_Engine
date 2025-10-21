@@ -17,27 +17,34 @@ resource "aws_iam_role" "iam_for_lambda" {
   assume_role_policy = data.aws_iam_policy_document.lambda_assume_role_policy.json
 }
 
-data "aws_iam_policy_document" "lambda_s3_policy" {
+resource "aws_sqs_queue" "remediation_trigger_queue" {
+  name = "remediation_trigger_queue"
+}
+
+data "aws_iam_policy_document" "lambda_policy" {
   statement {
     actions = [
       "s3:ListAllMyBuckets",
       "s3:GetBucketPublicAccessBlock",
       "s3:GetBucketEncryption"
     ]
-    resources = [
-      "*"
-    ]
+    resources = ["*"]
+  }
+
+  statement {
+    actions   = ["sqs:SendMessage"]
+    resources = [aws_sqs_queue.remediation_trigger_queue.arn]
   }
 }
 
-resource "aws_iam_policy" "lambda_s3_policy" {
-  name   = "lambda_s3_policy"
-  policy = data.aws_iam_policy_document.lambda_s3_policy.json
+resource "aws_iam_policy" "lambda_policy" {
+  name   = "lambda_s3_sqs_policy"
+  policy = data.aws_iam_policy_document.lambda_policy.json
 }
 
-resource "aws_iam_role_policy_attachment" "lambda_s3_policy_attachment" {
+resource "aws_iam_role_policy_attachment" "lambda_policy_attachment" {
   role       = aws_iam_role.iam_for_lambda.name
-  policy_arn = aws_iam_policy.lambda_s3_policy.arn
+  policy_arn = aws_iam_policy.lambda_policy.arn
 }
 
 data "archive_file" "zip_python_code" {
@@ -54,6 +61,14 @@ resource "aws_lambda_function" "s3_compliance_checker" {
   runtime          = "python3.8"
   timeout          = 60
   source_code_hash = data.archive_file.zip_python_code.output_base64sha256
+
+  environment {
+    variables = {
+      VANGUARD_AGENT_API_URL = var.vanguard_agent_api_url
+      VANGUARD_API_KEY       = var.vanguard_api_key
+      SQS_QUEUE_URL          = aws_sqs_queue.remediation_trigger_queue.id
+    }
+  }
 }
 
 resource "aws_cloudwatch_event_rule" "every_three_days" {

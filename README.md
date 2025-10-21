@@ -13,12 +13,20 @@ The core of the project is an AWS Lambda function, deployed and scheduled via Te
 
 This GRC-as-Code approach directly implements the requirements of **KSI-SVC-04 (Manage configuration of machine-based information resources using automation)** by using Python and Terraform to programmatically enforce and validate security configurations.
 
-## NIST 800-53 CM-6 Mapping
+## NIST 800-53 CM-6 Mapping & Automated Remediation Path
 
 This project directly addresses the following requirements of NIST 800-53 CM-6:
 
 - **CM-6:** The organization establishes and enforces configuration settings for information technology products and systems.
 - **CM-6 (1):** The organization automates the management and enforcement of configuration settings.
+
+### Closed-Loop GRC & Automated Enforcement (KSI-CNA-08)
+
+This engine demonstrates a full, closed-loop GRC process by linking **Continuous Evaluation (KSI-SVC-01)** to an **Automated Remediation Path**. When a `FAIL` status is detected for a compliance check:
+1.  The CCE payload is transmitted to the `Vanguard_Agent` for risk analysis.
+2.  Simultaneously, a message is sent to an SQS queue (`remediation_trigger_queue`).
+
+This SQS message serves as the trigger for a downstream automated remediation playbook (e.g., another Lambda function or a CI/CD pipeline) to apply the fix defined in the `remediation_playbooks` directory. This entire workflow satisfies the requirements for **KSI-CNA-08 (Automated Enforcement)**, ensuring that deviations from the established configuration baseline are not just detected, but are actively corrected in an automated fashion.
 
 ## GRC Engineering Review Statement
 
