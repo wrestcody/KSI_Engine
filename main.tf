@@ -22,15 +22,34 @@ resource "aws_sqs_queue" "remediation_trigger_queue" {
 }
 
 data "aws_iam_policy_document" "lambda_policy" {
+  # Required for CloudWatch logging
   statement {
     actions = [
-      "s3:ListAllMyBuckets",
-      "s3:GetBucketPublicAccessBlock",
-      "s3:GetBucketEncryption"
+      "logs:CreateLogGroup",
+      "logs:CreateLogStream",
+      "logs:PutLogEvents"
     ]
-    resources = ["*"]
+    resources = ["arn:aws:logs:*:*:*"]
   }
 
+  # Required for S3 compliance checks
+  statement {
+    actions = [
+      "s3:ListAllMyBuckets"
+    ]
+    resources = ["arn:aws:s3:::*"]
+  }
+
+  statement {
+    actions = [
+      "s3:GetBucketPublicAccessBlock",
+      "s3:GetBucketPolicyStatus",
+      "s3:GetBucketEncryption"
+    ]
+    resources = ["arn:aws:s3:::*"]
+  }
+
+  # Required for triggering remediation
   statement {
     actions   = ["sqs:SendMessage"]
     resources = [aws_sqs_queue.remediation_trigger_queue.arn]
