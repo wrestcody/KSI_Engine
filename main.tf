@@ -55,3 +55,23 @@ resource "aws_lambda_function" "s3_compliance_checker" {
   timeout          = 60
   source_code_hash = data.archive_file.zip_python_code.output_base64sha256
 }
+
+resource "aws_cloudwatch_event_rule" "every_three_days" {
+  name                = "every-three-days"
+  description         = "Fires a scheduled event every three days to trigger the S3 compliance checker."
+  schedule_expression = "rate(3 days)"
+}
+
+resource "aws_cloudwatch_event_target" "lambda_target" {
+  rule      = aws_cloudwatch_event_rule.every_three_days.name
+  target_id = "S3ComplianceChecker"
+  arn       = aws_lambda_function.s3_compliance_checker.arn
+}
+
+resource "aws_lambda_permission" "allow_cloudwatch" {
+  statement_id  = "AllowExecutionFromCloudWatch"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.s3_compliance_checker.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.every_three_days.arn
+}
