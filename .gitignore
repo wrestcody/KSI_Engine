@@ -1,0 +1,3 @@
+.terraform
+.terraform.lock.hcl
+compliance_checker.zip
