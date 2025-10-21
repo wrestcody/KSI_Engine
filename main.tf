@@ -35,7 +35,7 @@ data "aws_iam_policy_document" "lambda_policy" {
   # Required for S3 compliance checks
   statement {
     actions = [
-      "s3:ListAllMyBuckets"
+      "s3:ListBuckets"
     ]
     resources = ["arn:aws:s3:::*"]
   }
