@@ -35,11 +35,11 @@ def send_cce_to_vanguard(cce_payload):
     try:
         response = requests.post(api_url, headers=headers, json=cce_payload, timeout=10)
         response.raise_for_status()
-        print(f"Successfully sent CCE to Vanguard. Status: {response.status_code}, Response: {response.text}")
+        print(f"Successfully sent CCE to Vanguard for target {cce_payload['target_id']}. Status: {response.status_code}")
     except requests.exceptions.RequestException as e:
-        print(f"ERROR: Failed to send CCE to Vanguard: {e}")
+        print(f"ERROR: Failed to send CCE to Vanguard for target {cce_payload['target_id']}: {e}")
 
-def trigger_remediation(bucket_arn, failed_checks):
+def trigger_remediation(bucket_arn):
     """
     Sends a message to an SQS queue to trigger a downstream remediation playbook.
     """
@@ -50,9 +50,8 @@ def trigger_remediation(bucket_arn, failed_checks):
 
     sqs = boto3.client('sqs')
     message_body = {
-        'action': 'remediate_s3_bucket',
-        'resource_id': bucket_arn,
-        'failed_checks': failed_checks,
+        'target_id': bucket_arn,
+        'remediation_path': 'https://github.com/wrestcody/Praetorium_Nexus/blob/main/remediation_playbooks/s3_public_access_fix.tf',
         'timestamp': datetime.datetime.utcnow().isoformat()
     }
 
@@ -61,97 +60,83 @@ def trigger_remediation(bucket_arn, failed_checks):
             QueueUrl=sqs_queue_url,
             MessageBody=json.dumps(message_body)
         )
-        print(f"Successfully sent remediation trigger to SQS. Message ID: {response.get('MessageId')}")
+        print(f"Successfully sent remediation trigger for {bucket_arn}. Message ID: {response.get('MessageId')}")
     except Exception as e:
-        print(f"ERROR: Failed to send remediation trigger to SQS: {e}")
+        print(f"ERROR: Failed to send remediation trigger for {bucket_arn}: {e}")
 
+def check_public_access_block(s3_client, bucket_name):
+    """Checks if a bucket's Public Access Block is fully enabled."""
+    try:
+        config = s3_client.get_public_access_block(Bucket=bucket_name)['PublicAccessBlockConfiguration']
+        is_compliant = all([
+            config.get('BlockPublicAcls', False),
+            config.get('IgnorePublicAcls', False),
+            config.get('BlockPublicPolicy', False),
+            config.get('RestrictPublicBuckets', False)
+        ])
+        details = "Public access block is enabled." if is_compliant else "Public access block is not fully enabled."
+        return {"check_id": "S3.1_Public_Access_Blocked", "status": "PASS" if is_compliant else "FAIL", "details": details}
+    except s3_client.exceptions.ClientError as e:
+        if e.response['Error']['Code'] == 'NoSuchPublicAccessBlockConfiguration':
+            return {"check_id": "S3.1_Public_Access_Blocked", "status": "FAIL", "details": "Public access block configuration is missing."}
+        raise
 
-def create_cce_payload(bucket_arn, timestamp, status, finding, pass_fail_criteria, raw_severity='N/A', remediation_playbook_ref='N/A'):
-    """Helper function to create a Continuous Compliance Evidence (CCE) payload."""
-    return {
-        'KSI_ID': 'KSI-SVC-04',
-        'Control_ID': 'CM-6',
-        'Resource_ID': bucket_arn,
-        'Validation_Type': 'Automated',
-        'Pass_Fail_Criteria': pass_fail_criteria,
-        'Status': status,
-        'Raw_Severity': raw_severity,
-        'Finding': finding,
-        'Remediation_Playbook_Ref': remediation_playbook_ref,
-        'Validation_Timestamp': timestamp
-    }
+def check_default_encryption(s3_client, bucket_name):
+    """Checks if a bucket has default server-side encryption enabled."""
+    try:
+        encryption = s3_client.get_bucket_encryption(Bucket=bucket_name)
+        is_compliant = bool(encryption.get('ServerSideEncryptionConfiguration', {}).get('Rules'))
+        details = "Default encryption (AES256 or KMS) is enabled." if is_compliant else "Default encryption is not enabled."
+        return {"check_id": "S3.5_Server_Side_Encryption", "status": "PASS" if is_compliant else "FAIL", "details": details}
+    except s3_client.exceptions.ClientError as e:
+        if e.response['Error']['Code'] == 'ServerSideEncryptionConfigurationNotFoundError':
+            return {"check_id": "S3.5_Server_Side_Encryption", "status": "FAIL", "details": "Default encryption configuration is missing."}
+        raise
 
 def lambda_handler(event, context):
     """
-    Checks S3 buckets for compliance, sends CCE to Vanguard, and triggers remediation.
+    Checks S3 buckets for compliance, generates a consolidated CCE payload,
+    sends it to Vanguard, and triggers remediation if necessary.
     """
     s3 = boto3.client('s3')
-    timestamp = datetime.datetime.utcnow().isoformat()
     processed_buckets = 0
 
     try:
-        response = s3.list_buckets()
-        buckets = response.get('Buckets', [])
-
-        for bucket in buckets:
+        for bucket in s3.list_buckets().get('Buckets', []):
             bucket_name = bucket['Name']
             bucket_arn = f"arn:aws:s3:::{bucket_name}"
 
-            cce_payloads = []
-            failed_checks = []
+            # Aggregate findings from all checks for the bucket
+            findings = [
+                check_public_access_block(s3, bucket_name),
+                check_default_encryption(s3, bucket_name)
+            ]
 
-            # 1. Public Access Block Check
-            is_public_access_compliant = False
-            finding_public_access = f"S3 Bucket '{bucket_name}' does not enforce public access blocking or a configuration is missing."
-            try:
-                pub_access_block = s3.get_public_access_block(Bucket=bucket_name)
-                config = pub_access_block.get('PublicAccessBlockConfiguration', {})
-                if (config.get('BlockPublicAcls', False) and config.get('IgnorePublicAcls', False) and
-                    config.get('BlockPublicPolicy', False) and config.get('RestrictPublicBuckets', False)):
-                    is_public_access_compliant = True
-                    finding_public_access = f"S3 Bucket '{bucket_name}' enforces public access blocking."
-            except s3.exceptions.ClientError as e:
-                if e.response['Error']['Code'] != 'NoSuchPublicAccessBlockConfiguration':
-                    raise e
+            # Determine the overall status for the bucket
+            overall_status = "PASS" if all(f['status'] == 'PASS' for f in findings) else "FAIL"
 
-            pass_fail_criteria_public = 'All Public Access Block settings MUST be True.'
-            if is_public_access_compliant:
-                cce_payloads.append(create_cce_payload(bucket_arn, timestamp, 'PASS', finding_public_access, pass_fail_criteria_public))
-            else:
-                cce_payloads.append(create_cce_payload(bucket_arn, timestamp, 'FAIL', finding_public_access, pass_fail_criteria_public, 'High', 'remediation_playbooks/s3_public_access_fix.tf'))
-                failed_checks.append('public_access_block')
+            # Construct the final CCE payload
+            cce_payload = {
+                "engine_id": "KSI_Engine",
+                "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+                "target_id": bucket_arn,
+                "control_id": "NIST-800-53-CM-6",
+                "status": overall_status,
+                "findings": findings,
+                "remediation_path": "https://github.com/wrestcody/Praetorium_Nexus/blob/main/remediation_playbooks/s3_public_access_fix.tf"
+            }
 
-            # 2. Default Encryption Check
-            is_encryption_compliant = False
-            finding_encryption = f"S3 Bucket '{bucket_name}' does not have default encryption enabled."
-            try:
-                encryption = s3.get_bucket_encryption(Bucket=bucket_name)
-                if encryption.get('ServerSideEncryptionConfiguration', {}).get('Rules'):
-                    is_encryption_compliant = True
-                    finding_encryption = f"S3 Bucket '{bucket_name}' has default encryption enabled."
-            except s3.exceptions.ClientError as e:
-                if e.response['Error']['Code'] != 'ServerSideEncryptionConfigurationNotFoundError':
-                    raise e
+            # Send the payload to the downstream agent
+            send_cce_to_vanguard(cce_payload)
 
-            pass_fail_criteria_encryption = 'Default encryption MUST be enabled.'
-            if is_encryption_compliant:
-                cce_payloads.append(create_cce_payload(bucket_arn, timestamp, 'PASS', finding_encryption, pass_fail_criteria_encryption))
-            else:
-                cce_payloads.append(create_cce_payload(bucket_arn, timestamp, 'FAIL', finding_encryption, pass_fail_criteria_encryption, 'High', 'remediation_playbooks/s3_encryption_fix.tf'))
-                failed_checks.append('default_encryption')
-
-            # Process each CCE payload
-            for payload in cce_payloads:
-                send_cce_to_vanguard(payload)
-
-            # If any failures were detected for the bucket, trigger a single remediation action
-            if failed_checks:
-                trigger_remediation(bucket_arn, failed_checks)
+            # If the overall status is a failure, trigger one remediation action
+            if overall_status == "FAIL":
+                trigger_remediation(bucket_arn)
 
             processed_buckets += 1
 
     except Exception as e:
-        print(f"An error occurred during bucket processing: {e}")
+        print(f"An unexpected error occurred during bucket processing: {e}")
         return {'statusCode': 500, 'body': json.dumps({'error': str(e)})}
 
     return {
