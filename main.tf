@@ -1,3 +1,7 @@
+terraform {
+  required_version = ">= 1.0"
+}
+
 provider "aws" {
   region = "us-east-1"
 }
@@ -22,34 +26,25 @@ resource "aws_sqs_queue" "remediation_trigger_queue" {
 }
 
 data "aws_iam_policy_document" "lambda_policy" {
-  # Required for CloudWatch logging
   statement {
-    actions = [
-      "logs:CreateLogGroup",
-      "logs:CreateLogStream",
-      "logs:PutLogEvents"
-    ]
+    actions   = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
     resources = ["arn:aws:logs:*:*:*"]
   }
 
-  # Required for S3 compliance checks
   statement {
-    actions = [
-      "s3:ListBuckets"
-    ]
+    actions   = ["s3:ListBuckets"]
     resources = ["arn:aws:s3:::*"]
   }
 
   statement {
     actions = [
       "s3:GetBucketPublicAccessBlock",
-      "s3:GetBucketPolicyStatus",
-      "s3:GetBucketEncryption"
+      "s3:GetBucketEncryption",
+      "s3:GetBucketVersioning"
     ]
     resources = ["arn:aws:s3:::*"]
   }
 
-  # Required for triggering remediation
   statement {
     actions   = ["sqs:SendMessage"]
     resources = [aws_sqs_queue.remediation_trigger_queue.arn]
@@ -77,7 +72,7 @@ resource "aws_lambda_function" "s3_compliance_checker" {
   function_name    = "s3_compliance_checker"
   role             = aws_iam_role.iam_for_lambda.arn
   handler          = "compliance_checker.lambda_handler"
-  runtime          = "python3.8"
+  runtime          = "python3.11"
   timeout          = 60
   source_code_hash = data.archive_file.zip_python_code.output_base64sha256
 
@@ -86,6 +81,7 @@ resource "aws_lambda_function" "s3_compliance_checker" {
       VANGUARD_AGENT_API_URL = var.vanguard_agent_api_url
       VANGUARD_API_KEY       = var.vanguard_api_key
       SQS_QUEUE_URL          = aws_sqs_queue.remediation_trigger_queue.id
+      REMEDIATION_PATH       = var.remediation_path
     }
   }
 }

@@ -2,6 +2,17 @@
 
 This project is the `KSI_Engine`, a FedRAMP 20x GRC-as-Code engine that serves as a **PVA Producer**. It embodies an **engineer-to-engineer** philosophy to achieve in-depth **Mission Assurance** by streamlining evidence collection and enabling **Automated Enforcement** for a FedRAMP 20x Moderate authorization.
 
+## Why Implement This Service? The Business Case for Automated GRC
+
+In today's fast-paced cloud environments, manual compliance checks are slow, error-prone, and a drain on engineering resources. The `KSI_Engine` offers a compelling alternative by transforming Governance, Risk, and Compliance (GRC) into a proactive, automated, and code-driven practice.
+
+### Key Business Benefits:
+
+*   **Reduce Operational Costs:** By automating routine compliance checks, you free up valuable engineering hours that would otherwise be spent on manual audits and evidence gathering. This allows your team to focus on mission-critical tasks and innovation.
+*   **Increase Efficiency and Agility:** The engine provides near real-time visibility into your compliance posture, enabling you to identify and remediate issues faster than ever before. This accelerates your development lifecycle and reduces the risk of compliance-related delays.
+*   **Enhance Security and Risk Management:** The automated, closed-loop remediation process ensures that compliance deviations are not only detected but also corrected in a timely manner. This strengthens your security posture and reduces the risk of costly data breaches and regulatory penalties.
+*   **Improve User Experience:** By automating the GRC process, you reduce the compliance burden on your development teams, allowing them to focus on building better products and services.
+
 ## Project Overview & FedRAMP 20x Alignment
 
 This engine provides **Persistent Validation (PVA) for KSI-SVC-04 (Configuration Management)** by performing automated validation of AWS S3 bucket configurations. To meet FedRAMP 20x Moderate standards, this **PVA** is executed on a **3-day continuous cycle**.
@@ -24,11 +35,12 @@ This engine demonstrates a full, closed-loop GRC process. When a `FAIL` status i
 
 This SQS message is the **trigger for Automated Enforcement**. It initiates a downstream playbook to apply the required configuration, ensuring that deviations are not just detected, but are actively and automatically corrected. This workflow satisfies the requirements for **KSI-CNA-08 (Automated Enforcement)**.
 
+## Getting Started
+
+1.  **Configure Your Environment:** Create a `terraform.tfvars` file and populate it with the required variables, such as your Vanguard API key and endpoint.
+2.  **Deploy the Infrastructure:** Use the provided Terraform script (`main.tf`) to deploy the Lambda function and all supporting resources.
+3.  **Observe the PVA Output:** The Lambda function will output a stream of CCE records to its execution logs. This output is designed to be ingested by a downstream GRC platform.
+
 ## GRC Engineering Review Statement
 
 As a GRC Engineering best practice, all AI-generated logic within this engine is subject to continuous human review to ensure the completeness and accuracy of the compliance evidence produced. This ensures the automation is trustworthy and that the data feeding our risk management decisions is of the highest integrity.
-
-## Getting Started
-
-1. **Deploy the infrastructure:** Use the provided Terraform script (`main.tf`) to deploy the Lambda function and all supporting resources.
-2. **Observe the PVA Output:** The Lambda function will output a stream of CCE records to its execution logs. This output is designed to be ingested by a downstream GRC platform.
