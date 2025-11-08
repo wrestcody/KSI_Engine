@@ -8,3 +8,9 @@ variable "vanguard_api_key" {
   type        = string
   sensitive   = true
 }
+
+variable "remediation_path" {
+  description = "The URL to the remediation playbook."
+  type        = string
+  default     = "https://github.com/wrestcody/Praetorium_Nexus/blob/main/remediation_playbooks/s3_public_access_fix.tf"
+}
